@@ -10,251 +10,224 @@ from typing import Optional
 
 mcp = FastMCP("ESPN Public API Service")
 
-ESPN_SITE_API_BASE_URL = "https://site.api.espn.com"
-ESPN_CORE_API_BASE_URL = "https://sports.core.api.espn.com"
-ESPN_WEB_V3_API_BASE_URL = "https://site.web.api.espn.com"
-ESPN_CDN_API_BASE_URL = "https://cdn.espn.com"
-ESPN_NOW_API_BASE_URL = "https://now.core.api.espn.com"
-
-DEFAULT_HEADERS = {
-    "User-Agent": "ESPN-MCP-Service/1.0",
-    "Accept": "application/json",
-}
+BASE_URL = "https://site.api.espn.com"
 
 
 @mcp.tool()
-async def get_scoreboard(
-    sport: str,
-    league: str,
-    date: Optional[str] = None,
-) -> dict:
-    """Fetch live and recent sports scoreboards from ESPN for a given sport and league. Use this when the user asks about current scores, ongoing games, today's matchups, or recent game results."""
-    url = f"{ESPN_SITE_API_BASE_URL}/apis/site/v2/sports/{sport}/{league}/scoreboard"
-    params = {}
-    if date:
-        params["dates"] = date
-    async with httpx.AsyncClient(headers=DEFAULT_HEADERS, timeout=30) as client:
+async def check_health() -> dict:
+    """Check the health and connectivity status of the ESPN service, including database connectivity. Use this to verify the service is running before making other requests, or to diagnose connectivity issues."""
+    async with httpx.AsyncClient(timeout=30) as client:
         try:
-            response = await client.get(url, params=params)
+            response = await client.get(f"{BASE_URL}/healthz")
+            response.raise_for_status()
+            return {"status": "ok", "code": response.status_code, "body": response.json()}
+        except httpx.HTTPStatusError as e:
+            return {"status": "error", "code": e.response.status_code, "body": e.response.text}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+
+@mcp.tool()
+async def list_sports_and_leagues(
+    resource: str,
+    id: Optional[int] = None
+) -> dict:
+    """Retrieve all available sports or leagues. Use this to discover what sports and leagues are supported by the service, or to find IDs/slugs needed for filtering other queries. Pass resource='sports' for sports or resource='leagues' for leagues."""
+    if resource not in ("sports", "leagues"):
+        return {"error": "resource must be 'sports' or 'leagues'"}
+    async with httpx.AsyncClient(timeout=30) as client:
+        try:
+            if id is not None:
+                url = f"{BASE_URL}/api/{resource}/{id}/"
+            else:
+                url = f"{BASE_URL}/api/{resource}/"
+            response = await client.get(url)
             response.raise_for_status()
             return response.json()
         except httpx.HTTPStatusError as e:
-            return {"error": f"HTTP error {e.response.status_code}: {e.response.text}"}
+            return {"error": e.response.text, "status_code": e.response.status_code}
         except Exception as e:
             return {"error": str(e)}
 
 
 @mcp.tool()
-async def get_teams(
-    sport: str,
-    league: str,
-    limit: int = 50,
-) -> dict:
-    """Retrieve a list of teams for a given sport and league from ESPN. Use this when the user wants to browse teams, find team information, or look up team IDs for further queries."""
-    url = f"{ESPN_SITE_API_BASE_URL}/apis/site/v2/sports/{sport}/{league}/teams"
-    params = {"limit": limit}
-    async with httpx.AsyncClient(headers=DEFAULT_HEADERS, timeout=30) as client:
-        try:
-            response = await client.get(url, params=params)
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            return {"error": f"HTTP error {e.response.status_code}: {e.response.text}"}
-        except Exception as e:
-            return {"error": str(e)}
-
-
-@mcp.tool()
-async def get_athlete_stats(
-    athlete_id: str,
-    sport: str,
-    league: str,
-    stat_type: str = "season",
-    season: Optional[str] = None,
-) -> dict:
-    """Fetch season stats, gamelogs, or career splits for a specific athlete from ESPN. Use this when the user asks about player statistics, performance metrics, or historical data for a player."""
-    # Map stat_type to ESPN web v3 endpoint segments
-    stat_type_map = {
-        "season": "stats",
-        "gamelog": "gamelog",
-        "splits": "splits",
-    }
-    endpoint_segment = stat_type_map.get(stat_type, "stats")
-    url = f"{ESPN_WEB_V3_API_BASE_URL}/apis/common/v3/sports/{sport}/{league}/athletes/{athlete_id}/{endpoint_segment}"
-    params = {}
-    if season:
-        params["season"] = season
-    async with httpx.AsyncClient(headers=DEFAULT_HEADERS, timeout=30) as client:
-        try:
-            response = await client.get(url, params=params)
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            # Fallback: try site v2 athlete overview
-            fallback_url = f"{ESPN_SITE_API_BASE_URL}/apis/site/v2/sports/{sport}/{league}/athletes/{athlete_id}"
-            try:
-                fallback_response = await client.get(fallback_url)
-                fallback_response.raise_for_status()
-                return fallback_response.json()
-            except Exception:
-                return {"error": f"HTTP error {e.response.status_code}: {e.response.text}"}
-        except Exception as e:
-            return {"error": str(e)}
-
-
-@mcp.tool()
-async def get_news(
+async def search_teams(
     sport: Optional[str] = None,
     league: Optional[str] = None,
-    team_id: Optional[str] = None,
-    limit: int = 10,
+    is_active: Optional[bool] = None,
+    abbreviation: Optional[str] = None,
+    search: Optional[str] = None,
+    id: Optional[int] = None
 ) -> dict:
-    """Retrieve sports news articles from ESPN for a specific sport, league, or team. Use this when the user asks for the latest news, headlines, or updates about a sport or team."""
-    params = {"limit": limit}
-
-    if sport and league and team_id:
-        url = f"{ESPN_SITE_API_BASE_URL}/apis/site/v2/sports/{sport}/{league}/news"
-        params["team"] = team_id
-    elif sport and league:
-        url = f"{ESPN_SITE_API_BASE_URL}/apis/site/v2/sports/{sport}/{league}/news"
-    elif sport:
-        url = f"{ESPN_SITE_API_BASE_URL}/apis/site/v2/sports/{sport}/news"
-    else:
-        # General ESPN news from now API
-        url = f"{ESPN_NOW_API_BASE_URL}/v1/layout/news"
-
-    async with httpx.AsyncClient(headers=DEFAULT_HEADERS, timeout=30) as client:
+    """List and filter sports teams. Use this to find teams by sport, league, name, abbreviation, or active status. Supports free-text search across team name, abbreviation, and location. Use this before querying events or stats when you need a team ID."""
+    async with httpx.AsyncClient(timeout=30) as client:
         try:
-            response = await client.get(url, params=params)
-            response.raise_for_status()
-            return response.json()
+            if id is not None:
+                url = f"{BASE_URL}/api/teams/{id}/"
+                response = await client.get(url)
+                response.raise_for_status()
+                return response.json()
+            else:
+                url = f"{BASE_URL}/api/teams/"
+                params = {}
+                if sport is not None:
+                    params["sport"] = sport
+                if league is not None:
+                    params["league"] = league
+                if is_active is not None:
+                    params["is_active"] = str(is_active).lower()
+                if abbreviation is not None:
+                    params["abbreviation"] = abbreviation
+                if search is not None:
+                    params["search"] = search
+                response = await client.get(url, params=params)
+                response.raise_for_status()
+                return response.json()
         except httpx.HTTPStatusError as e:
-            return {"error": f"HTTP error {e.response.status_code}: {e.response.text}"}
+            return {"error": e.response.text, "status_code": e.response.status_code}
         except Exception as e:
             return {"error": str(e)}
 
 
 @mcp.tool()
-async def get_standings(
-    sport: str,
-    league: str,
-    season: Optional[str] = None,
+async def search_events(
+    sport: Optional[str] = None,
+    league: Optional[str] = None,
+    date: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    status: Optional[str] = None,
+    season_year: Optional[int] = None,
+    season_type: Optional[int] = None,
+    team: Optional[str] = None,
+    id: Optional[int] = None
 ) -> dict:
-    """Fetch current league standings from ESPN for a sport and league. Use this when the user asks about team rankings, conference standings, playoff pictures, or divisional standings."""
-    url = f"{ESPN_SITE_API_BASE_URL}/apis/v2/sports/{sport}/{league}/standings"
-    params = {}
-    if season:
-        params["season"] = season
-    async with httpx.AsyncClient(headers=DEFAULT_HEADERS, timeout=30) as client:
+    """List and filter sports events/games. Use this to find games by sport, league, date range, status, season, or team. Essential for answering questions about schedules, scores, live games, or historical results. Status options: scheduled, in_progress, final, postponed, cancelled."""
+    async with httpx.AsyncClient(timeout=30) as client:
         try:
-            response = await client.get(url, params=params)
+            if id is not None:
+                url = f"{BASE_URL}/api/events/{id}/"
+                response = await client.get(url)
+                response.raise_for_status()
+                return response.json()
+            else:
+                url = f"{BASE_URL}/api/events/"
+                params = {}
+                if sport is not None:
+                    params["sport"] = sport
+                if league is not None:
+                    params["league"] = league
+                if date is not None:
+                    params["date"] = date
+                if date_from is not None:
+                    params["date_from"] = date_from
+                if date_to is not None:
+                    params["date_to"] = date_to
+                if status is not None:
+                    params["status"] = status
+                if season_year is not None:
+                    params["season_year"] = season_year
+                if season_type is not None:
+                    params["season_type"] = season_type
+                if team is not None:
+                    params["team"] = team
+                response = await client.get(url, params=params)
+                response.raise_for_status()
+                return response.json()
+        except httpx.HTTPStatusError as e:
+            return {"error": e.response.text, "status_code": e.response.status_code}
+        except Exception as e:
+            return {"error": str(e)}
+
+
+@mcp.tool()
+async def get_athlete_info(
+    resource: str,
+    id: Optional[int] = None
+) -> dict:
+    """Retrieve athlete profiles and season statistics. Use this to look up player details, biographical information, or season stats. To get season statistics, use resource='stats'. To get athlete profile, use resource='athletes'."""
+    if resource not in ("athletes", "stats"):
+        return {"error": "resource must be 'athletes' or 'stats'"}
+    async with httpx.AsyncClient(timeout=30) as client:
+        try:
+            if resource == "athletes":
+                if id is not None:
+                    url = f"{BASE_URL}/api/athletes/{id}/"
+                else:
+                    url = f"{BASE_URL}/api/athletes/"
+            else:  # stats
+                if id is not None:
+                    url = f"{BASE_URL}/api/athlete-season-stats/{id}/"
+                else:
+                    url = f"{BASE_URL}/api/athlete-season-stats/"
+            response = await client.get(url)
             response.raise_for_status()
             return response.json()
         except httpx.HTTPStatusError as e:
-            # Fallback to site v2
-            fallback_url = f"{ESPN_SITE_API_BASE_URL}/apis/site/v2/sports/{sport}/{league}/standings"
-            try:
-                fallback_response = await client.get(fallback_url, params=params)
-                fallback_response.raise_for_status()
-                return fallback_response.json()
-            except Exception:
-                return {"error": f"HTTP error {e.response.status_code}: {e.response.text}"}
+            return {"error": e.response.text, "status_code": e.response.status_code}
         except Exception as e:
             return {"error": str(e)}
 
 
 @mcp.tool()
 async def get_injuries(
-    sport: str,
-    league: str,
-    team_id: Optional[str] = None,
+    id: Optional[int] = None
 ) -> dict:
-    """Retrieve current injury reports for a sport and league from ESPN. Use this when the user asks about player injuries, injury status, or who is out/questionable for upcoming games."""
-    if team_id:
-        url = f"{ESPN_SITE_API_BASE_URL}/apis/site/v2/sports/{sport}/{league}/teams/{team_id}/injuries"
-    else:
-        url = f"{ESPN_SITE_API_BASE_URL}/apis/site/v2/sports/{sport}/{league}/injuries"
-    async with httpx.AsyncClient(headers=DEFAULT_HEADERS, timeout=30) as client:
+    """Retrieve player injury records and reports. Use this to find out which players are injured, their injury status, and details about the injury. Useful for fantasy sports analysis or game preview research."""
+    async with httpx.AsyncClient(timeout=30) as client:
         try:
+            if id is not None:
+                url = f"{BASE_URL}/api/injuries/{id}/"
+            else:
+                url = f"{BASE_URL}/api/injuries/"
             response = await client.get(url)
             response.raise_for_status()
             return response.json()
         except httpx.HTTPStatusError as e:
-            return {"error": f"HTTP error {e.response.status_code}: {e.response.text}"}
+            return {"error": e.response.text, "status_code": e.response.status_code}
         except Exception as e:
             return {"error": str(e)}
 
 
 @mcp.tool()
-async def get_game_details(
-    event_id: str,
-    sport: str,
-    league: str,
-    include_play_by_play: bool = False,
-    include_odds: bool = False,
-) -> dict:
-    """Fetch detailed information about a specific ESPN game event including play-by-play, odds, drives, win probability, and box score. Use this when the user wants in-depth analysis of a specific game."""
-    result = {}
-
-    async with httpx.AsyncClient(headers=DEFAULT_HEADERS, timeout=30) as client:
-        # Summary / box score
-        summary_url = f"{ESPN_SITE_API_BASE_URL}/apis/site/v2/sports/{sport}/{league}/summary"
-        try:
-            summary_response = await client.get(summary_url, params={"event": event_id})
-            summary_response.raise_for_status()
-            result["summary"] = summary_response.json()
-        except httpx.HTTPStatusError as e:
-            result["summary_error"] = f"HTTP error {e.response.status_code}: {e.response.text}"
-        except Exception as e:
-            result["summary_error"] = str(e)
-
-        # Play-by-play
-        if include_play_by_play:
-            pbp_url = f"{ESPN_CDN_API_BASE_URL}/core/{sport}/{league}/playbyplay"
-            try:
-                pbp_response = await client.get(pbp_url, params={"xhr": 1, "gameId": event_id})
-                pbp_response.raise_for_status()
-                result["play_by_play"] = pbp_response.json()
-            except httpx.HTTPStatusError as e:
-                result["play_by_play_error"] = f"HTTP error {e.response.status_code}: {e.response.text}"
-            except Exception as e:
-                result["play_by_play_error"] = str(e)
-
-        # Odds
-        if include_odds:
-            odds_url = f"{ESPN_CORE_API_BASE_URL}/v2/sports/{sport}/{league}/events/{event_id}/competitions/{event_id}/odds"
-            try:
-                odds_response = await client.get(odds_url)
-                odds_response.raise_for_status()
-                result["odds"] = odds_response.json()
-            except httpx.HTTPStatusError as e:
-                result["odds_error"] = f"HTTP error {e.response.status_code}: {e.response.text}"
-            except Exception as e:
-                result["odds_error"] = str(e)
-
-    return result
-
-
-@mcp.tool()
 async def get_transactions(
-    sport: str,
-    league: str,
-    team_id: Optional[str] = None,
-    limit: int = 20,
+    id: Optional[int] = None
 ) -> dict:
-    """Retrieve recent player transactions (trades, signings, waivers, releases) for a sport and league from ESPN. Use this when the user asks about player movements, roster changes, trades, or free agent signings."""
-    if team_id:
-        url = f"{ESPN_SITE_API_BASE_URL}/apis/site/v2/sports/{sport}/{league}/teams/{team_id}/transactions"
-    else:
-        url = f"{ESPN_SITE_API_BASE_URL}/apis/site/v2/sports/{sport}/{league}/transactions"
-    params = {"limit": limit}
-    async with httpx.AsyncClient(headers=DEFAULT_HEADERS, timeout=30) as client:
+    """Retrieve player transaction records such as trades, signings, releases, and roster moves. Use this to find recent player movement between teams or roster changes."""
+    async with httpx.AsyncClient(timeout=30) as client:
         try:
-            response = await client.get(url, params=params)
+            if id is not None:
+                url = f"{BASE_URL}/api/transactions/{id}/"
+            else:
+                url = f"{BASE_URL}/api/transactions/"
+            response = await client.get(url)
             response.raise_for_status()
             return response.json()
         except httpx.HTTPStatusError as e:
-            return {"error": f"HTTP error {e.response.status_code}: {e.response.text}"}
+            return {"error": e.response.text, "status_code": e.response.status_code}
+        except Exception as e:
+            return {"error": str(e)}
+
+
+@mcp.tool()
+async def get_news_and_venues(
+    resource: str,
+    id: Optional[int] = None
+) -> dict:
+    """Retrieve sports news articles or venue information. Use resource='news' to get sports news and articles. Use resource='venues' to get stadium and arena details. Useful for providing context about games, locations, or current events in sports."""
+    if resource not in ("news", "venues"):
+        return {"error": "resource must be 'news' or 'venues'"}
+    async with httpx.AsyncClient(timeout=30) as client:
+        try:
+            if id is not None:
+                url = f"{BASE_URL}/api/{resource}/{id}/"
+            else:
+                url = f"{BASE_URL}/api/{resource}/"
+            response = await client.get(url)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            return {"error": e.response.text, "status_code": e.response.status_code}
         except Exception as e:
             return {"error": str(e)}
 
