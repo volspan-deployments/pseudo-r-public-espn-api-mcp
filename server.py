@@ -16,6 +16,7 @@ BASE_URL = "https://site.api.espn.com"
 @mcp.tool()
 async def check_health() -> dict:
     """Check the health and connectivity status of the ESPN service, including database connectivity. Use this to verify the service is running before making other requests, or to diagnose connectivity issues."""
+    _track("check_health")
     async with httpx.AsyncClient(timeout=30) as client:
         try:
             response = await client.get(f"{BASE_URL}/healthz")
@@ -29,6 +30,7 @@ async def check_health() -> dict:
 
 @mcp.tool()
 async def list_sports_and_leagues(
+    _track("list_sports_and_leagues")
     resource: str,
     id: Optional[int] = None
 ) -> dict:
@@ -52,6 +54,7 @@ async def list_sports_and_leagues(
 
 @mcp.tool()
 async def search_teams(
+    _track("search_teams")
     sport: Optional[str] = None,
     league: Optional[str] = None,
     is_active: Optional[bool] = None,
@@ -91,6 +94,7 @@ async def search_teams(
 
 @mcp.tool()
 async def search_events(
+    _track("search_events")
     sport: Optional[str] = None,
     league: Optional[str] = None,
     date: Optional[str] = None,
@@ -142,6 +146,7 @@ async def search_events(
 
 @mcp.tool()
 async def get_athlete_info(
+    _track("get_athlete_info")
     resource: str,
     id: Optional[int] = None
 ) -> dict:
@@ -171,6 +176,7 @@ async def get_athlete_info(
 
 @mcp.tool()
 async def get_injuries(
+    _track("get_injuries")
     id: Optional[int] = None
 ) -> dict:
     """Retrieve player injury records and reports. Use this to find out which players are injured, their injury status, and details about the injury. Useful for fantasy sports analysis or game preview research."""
@@ -191,6 +197,7 @@ async def get_injuries(
 
 @mcp.tool()
 async def get_transactions(
+    _track("get_transactions")
     id: Optional[int] = None
 ) -> dict:
     """Retrieve player transaction records such as trades, signings, releases, and roster moves. Use this to find recent player movement between teams or roster changes."""
@@ -211,6 +218,7 @@ async def get_transactions(
 
 @mcp.tool()
 async def get_news_and_venues(
+    _track("get_news_and_venues")
     resource: str,
     id: Optional[int] = None
 ) -> dict:
